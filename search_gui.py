@@ -4,8 +4,9 @@ from PySide.QtGui import QApplication, QWidget, QPushButton, QLineEdit, QTextEdi
 from PySide.QtCore import QThread
 
 from Bio import Entrez
+from excel_mod import Excel
 
-email = 'ypseu.2007@163.com'
+email = 'mytest@163.com'
 MAX_THREAD = 10
 RET_MAX = 20
 all_output = []
@@ -17,11 +18,13 @@ class Dialog(QWidget):
         self.setupUI()
         self.setupConnection()
         self.threadPool = []
+        self.excel = Excel()
         #self.initSearchDb()
 
     def setupUI(self):
 
         self.pushButton = QPushButton(u"Search", self)
+        #self.testButton = QPushButton(u"Test", self)
         self.lineEdit = QLineEdit(self)
         self.textEdit = QTextEdit(self)
         self.comboBox = QComboBox(self)
@@ -36,6 +39,9 @@ class Dialog(QWidget):
         self.topLayout.addWidget(self.comboBox)
         self.topLayout.addWidget(self.lineEdit)
         self.topLayout.addWidget(self.pushButton)
+        #self.topLayout.addWidget(self.testButton)
+
+        #self.testButton.clicked.connect(self.onTestButtonClicked)
 
         self.layout.addLayout(self.topLayout)
         self.layout.addWidget(self.textEdit)
@@ -63,17 +69,14 @@ class Dialog(QWidget):
         if int(record['Count']) / RET_MAX > MAX_THREAD:
             self.realThreadNum = MAX_THREAD
             each_count = int(record['Count'])/MAX_THREAD
-            start = 0
+            startIndex = 0
             for i in range(MAX_THREAD - 1):
-                thread = MyThread(start=start, count=each_count, dbName=dbName, fieldName=fieldName)
+                thread = MyThread(startIndex, each_count, dbName, fieldName)
                 thread.finished.connect(self.onThreadFinished)
-                print thread
-                print dir(thread)
                 thread.start()
-                print thread
                 self.threadPool.append(thread)
-                start = start + each_count
-            thread = MyThread(start=start, count=(int(record['Count'])-start+1), dbName=dbName, fieldName=fieldName)
+                startIndex = startIndex + each_count
+            thread = MyThread(startIndex, (int(record['Count'])-startIndex+1), dbName, fieldName)
             thread.finished.connect(self.onThreadFinished)
             self.threadPool.append(thread)
             thread.start()
@@ -82,14 +85,16 @@ class Dialog(QWidget):
                 self.realThreadNum = 1
             else:
                 self.realThreadNum = int(record['Count'])/RET_MAX + 1
-            start = 0
+            startIndex = 0
             for i in range(self.realThreadNum):
-                thread = MyThread(start=start, count=RET_MAX, dbName=dbName, fieldName=fieldName)
+                thread = MyThread(startIndex, RET_MAX, dbName, fieldName)
                 thread.finished.connect(self.onThreadFinished)
                 self.threadPool.append(thread)
                 thread.start()
-                start = start + RET_MAX
+                startIndex = startIndex + RET_MAX
         self.log('reading data')
+        filename = '%s_%s_output.xls' % (dbName, fieldName)
+        self.excel.setFilename(filename)
 
     def log(self, context):
         self.textEdit.append(context)
@@ -107,34 +112,47 @@ class Dialog(QWidget):
 
     def onThreadFinished(self):
         self.finishedThreadNum = self.finishedThreadNum + 1
-        self.log('finished %s ' % self.finished)
+        self.log('finished thread %s ' % self.finishedThreadNum)
         if(self.finishedThreadNum == self.realThreadNum):
-            print all_output
+            print all_output[0][0]
+            heads = all_output[0][0].keys()
+            self.excel.setHead(heads)
+            for values in all_output:
+                for value in values:
+                    self.excel.addValues(value)
+        self.excel.save()
+
+    def onTestButtonClicked(self):
+        self.finishedThreadNum = 0
+        self.realThreadNum = 1
+        self.thread = MyThread(0, 10,"abd","123")
+        self.thread.finished.connect(self.onThreadFinished)
+        self.thread.startIndex()
 
 class MyThread(QThread):
-    def __init__(self, start, count, dbName, fieldName):
+    def __init__(self, startIndex, count, dbName, fieldName):
         super(MyThread, self).__init__()
-        #self.entrez = Entrez 
-        #self.entrez.email = email
-        #self.start = start
-        #self.count = count
-        #self.dbName = dbName
-        #self.fieldName = fieldName
-        #self.output = []
+        self.entrez = Entrez 
+        self.entrez.email = email
+        self.startIndex = startIndex
+        self.count = count
+        self.dbName = dbName
+        self.fieldName = fieldName
 
     def run(self):
-        print "yuping"
-        #times = None 
-        #if self.count == RET_MAX:
-            #times = 1
-        #else:
-            #times = self.count/RET_MAX + 1
-        #n = 0
-        #while n < times:
-            #handle = self.entrez.esearch(db=self.dbName, term=self.fieldName, usehistory='y', retstart=(self.start + n*RET_MAX))
-            #record = self.entrez.read(handle)
-            #handle = self.entrez.efetch(db=dbName, id=record['IdList'], rettype='gb')
-            #self.output.append(handle.read())
-            #n = n+1
-        #all_output.append(self.output)
-        self.exec_() 
+        times = None 
+        if self.count == RET_MAX:
+            times = 1
+        else:
+            times = self.count/RET_MAX + 1
+        n = 0
+        while n < times:
+            handle = self.entrez.esearch(db=self.dbName, term=self.fieldName, usehistory='y', retstart=(self.startIndex + n*RET_MAX))
+            record = self.entrez.read(handle)
+            handle = self.entrez.esummary(db=self.dbName, id=','.join(record['IdList']))
+            #self.output.append(self.entrez.read(handle))
+            result = self.entrez.read(handle)
+            if not isinstance(result, list):
+                result = [result]
+            all_output.append(result)
+            n = n+1
