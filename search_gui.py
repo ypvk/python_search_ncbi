@@ -127,10 +127,10 @@ class Dialog(QWidget):
                 self.threadPool.append(thread)
                 thread.start()
                 startIndex = startIndex + RET_MAX_SUMMARY
-        self.log("%s" % self.realThreadNum)
+        self.log("thread num: %s" % self.realThreadNum)
         self.log('reading data')
-        filename = '%s_%s_output.xls' % (dbName, fieldName)
-        self.excel.setFilename(filename)
+        self.filename = '%s_%s_output.xls' % (dbName, fieldName)
+        self.excel.setFilename(self.filename)
 
     def log(self, context):
         self.textEdit.append(context)
@@ -167,6 +167,7 @@ class Dialog(QWidget):
             all_output = []
             self.excel.clearValues()
             self.pushButton.setDisabled(False)
+            self.log("output to file: %s" % self.filename)
 
     def onFinishedCountChange(self, num):
         self.progressBar.setValue(num)
@@ -215,6 +216,7 @@ class MyThread(QThread):
                     query_key=self.query_key
                     )
             result = self.entrez.read(handle)
+            handle.close()
             if not isinstance(result, list):
                 result = [result]
             global all_output
