@@ -7,11 +7,11 @@ from Bio import Entrez
 from excel_mod import Excel
 
 email = 'mytest@163.com'
-MAX_THREAD = 10
+MAX_THREAD = 2 # seam that thread large than 2 data is not ready
 RET_MAX = 20
 all_output = []
 RET_MAX_SUMMARY = 10000
-MAX_COUNT = 100000
+MAX_COUNT = 65000 # seam that large than 65000 data is not ready
 FINISHED_COUNT = 0
 
 class Dialog(QWidget):
@@ -67,6 +67,8 @@ class Dialog(QWidget):
         if not self.lineEdit.text() or not self.comboBox.count():
             QtGui.QMessageBox.information(self, u"Warning", u"Please Set the Search Field")
             return
+        # disable button
+        self.pushButton.setDisabled(True)
         dbName = self.comboBox.currentText()
         fieldName = self.lineEdit.text()
         self.log("Start searching db: %s and field: %s" % (dbName, fieldName))
@@ -74,17 +76,31 @@ class Dialog(QWidget):
         handle = self.entrez.esearch(db=dbName, term=fieldName, usehistory='y')
         record = self.entrez.read(handle)
         self.log("All result count %s" % record['Count'])
-        self.totalUids = record['Count']
+        self.totalUids = int(record['Count'])
+        # to get onnly data less than the MAX_COUNT
+        if self.totalUids > MAX_COUNT:
+            ret = QtGui.QMessageBox.question(
+                    self,
+                    u'Warning',
+                    u'result count %s is too large, will only get the %s result \
+                            continue?' % (self.totalUids, MAX_COUNT),
+                            QtGui.QMessageBox.Ok | QtGui.QMessageBox.Cancel
+                            )
+            if ret == QtGui.QMessageBox.Ok:
+                self.totalUids = MAX_COUNT
+            else:
+                return
         #handle = self.entrez.efetch(db=dbName, id=record['IdList'], rettype='gb')
         self.finishedThreadNum = 0
         WebEnv = record['WebEnv']
         QueryKey = record['QueryKey']
+        global FINISHED_COUNT
         FINISHED_COUNT = 0
         self.progressBar.setValue(0)
-        self.progressBar.setMaximum(int(self.totalUids))
-        if int(record['Count']) / RET_MAX_SUMMARY > MAX_THREAD:
+        self.progressBar.setMaximum(self.totalUids)
+        if self.totalUids / RET_MAX_SUMMARY >= MAX_THREAD:
             self.realThreadNum = MAX_THREAD
-            each_count = int(record['Count'])/MAX_THREAD
+            each_count = self.totalUids/MAX_THREAD
             startIndex = 0
             for i in range(MAX_THREAD - 1):
                 thread = MyThread(startIndex, each_count, dbName, fieldName, WebEnv, QueryKey)
@@ -93,16 +109,16 @@ class Dialog(QWidget):
                 thread.start()
                 self.threadPool.append(thread)
                 startIndex = startIndex + each_count
-            thread = MyThread(startIndex, (int(record['Count'])-startIndex+1), dbName, fieldName, WebEnv, QueryKey)
+            thread = MyThread(startIndex, (self.totalUids-startIndex+1), dbName, fieldName, WebEnv, QueryKey)
             thread.finished.connect(self.onThreadFinished)
             thread.finishedCountChanged.connect(self.onFinishedCountChange)
             self.threadPool.append(thread)
             thread.start()
         else:
-            if int(record['Count']) == RET_MAX_SUMMARY:
+            if self.totalUids == RET_MAX_SUMMARY:
                 self.realThreadNum = 1
             else:
-                self.realThreadNum = int(record['Count'])/RET_MAX_SUMMARY + 1
+                self.realThreadNum = self.totalUids/RET_MAX_SUMMARY + 1
             startIndex = 0
             for i in range(self.realThreadNum):
                 thread = MyThread(startIndex, RET_MAX_SUMMARY, dbName, fieldName, WebEnv, QueryKey)
@@ -123,7 +139,11 @@ class Dialog(QWidget):
         self.entrez = Entrez 
         self.entrez.email = email
         self.log("Connect to NCBI")
-        handle = self.entrez.einfo()
+        try:
+            handle = self.entrez.einfo()
+        except:
+            QtGui.QMessageBox.warning(self, u"Error", u"Error Connect the WebSite")
+            self.close()
         record = self.entrez.read(handle)
         self.log("Get NCBI DataBases:")
         for name in record['DbList']:
@@ -134,6 +154,7 @@ class Dialog(QWidget):
         self.finishedThreadNum = self.finishedThreadNum + 1
         self.log('finished thread %s ' % self.finishedThreadNum)
         if(self.finishedThreadNum == self.realThreadNum):
+            global all_output
             heads = all_output[0][0].keys()
             self.excel.setHead(heads)
             for values in all_output:
@@ -143,6 +164,10 @@ class Dialog(QWidget):
             self.progressBar.setValue(int(self.totalUids))
             # clear all thread
             self.threadPool = []
+            all_output = []
+            self.excel.clearValues()
+            self.pushButton.setDisabled(False)
+
     def onFinishedCountChange(self, num):
         self.progressBar.setValue(num)
 
@@ -176,17 +201,25 @@ class MyThread(QThread):
             times = self.count/RET_MAX_SUMMARY + 1
         n = 0
         while n < times:
+            one_time_retmax = 0
+            one_time_retstart = self.startIndex+n*RET_MAX_SUMMARY
+            if self.count - n*RET_MAX_SUMMARY >= RET_MAX_SUMMARY:
+                one_time_retmax = RET_MAX_SUMMARY
+            else:
+                one_time_retmax = self.count - n*RET_MAX_SUMMARY
             handle = self.entrez.esummary(
                     db=self.dbName,
-                    retstart=(self.startIndex+n*RET_MAX_SUMMARY),
-                    retmax=RET_MAX_SUMMARY,
+                    retstart=one_time_retstart,
+                    retmax=one_time_retmax,
                     WebEnv=self.WebEnv,
                     query_key=self.query_key
                     )
             result = self.entrez.read(handle)
             if not isinstance(result, list):
                 result = [result]
+            global all_output
             all_output.append(result)
-            FINISHED_COUNT =+ len(result)
+            global FINISHED_COUNT
+            FINISHED_COUNT = FINISHED_COUNT + len(result)
             self.finishedCountChanged.emit(FINISHED_COUNT)
             n = n+1
